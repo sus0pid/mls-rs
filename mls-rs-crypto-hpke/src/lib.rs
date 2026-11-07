@@ -13,6 +13,7 @@ pub mod dhkem;
 pub mod hpke;
 pub mod kdf;
 pub mod kem_combiner;
+pub mod ml_kem;
 
 #[cfg(feature = "test_utils")]
 mod test_utils;
