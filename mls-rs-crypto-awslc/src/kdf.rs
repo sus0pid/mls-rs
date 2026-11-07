@@ -143,10 +143,33 @@ impl Hash for AwsLcHash {
 
 #[cfg(feature = "post-quantum")]
 pub mod shake {
-    use crate::aws_lc_sys_impl::{EVP_Digest, EVP_shake128};
+    use crate::aws_lc_sys_impl::{EVP_Digest, EVP_shake128, EVP_shake256, EVP_MD};
     use crate::{check_int_return, AwsLcCryptoError};
     use mls_rs_crypto_traits::VariableLengthHash;
     use std::{os::raw::c_uint, ptr::null_mut};
+
+    /// One-shot XOF: absorbs `input` and squeezes `out_len` bytes. For XOFs, `EVP_Digest`
+    /// reads the requested output length from `out_size` (`EVP_DigestFinalXOF`).
+    fn xof(md: *const EVP_MD, input: &[u8], out_len: usize) -> Result<Vec<u8>, AwsLcCryptoError> {
+        let mut output = vec![0u8; out_len];
+
+        let mut len: u32 = out_len
+            .try_into()
+            .map_err(|_| AwsLcCryptoError::CryptoError)?;
+
+        unsafe {
+            check_int_return(EVP_Digest(
+                input.as_ptr().cast(),
+                input.len(),
+                output.as_mut_ptr(),
+                &mut len as *mut c_uint,
+                md,
+                null_mut(),
+            ))?;
+        }
+
+        Ok(output)
+    }
 
     #[derive(Clone, Copy, Debug)]
     pub struct AwsLcShake128;
@@ -155,24 +178,21 @@ pub mod shake {
         type Error = AwsLcCryptoError;
 
         fn hash(&self, input: &[u8], out_len: usize) -> Result<Vec<u8>, Self::Error> {
-            let mut output = vec![0u8; out_len];
+            xof(unsafe { EVP_shake128() }, input, out_len)
+        }
+    }
 
-            let mut len: u32 = out_len
-                .try_into()
-                .map_err(|_| AwsLcCryptoError::CryptoError)?;
+    /// SHAKE256 (FIPS 202 §6.2). Used as the PRG of MLKEM768-X25519
+    /// (draft-irtf-cfrg-concrete-hybrid-kems §4.2) and as `Derive` for HPKE PQ KEMs
+    /// (draft-ietf-hpke-pq §5).
+    #[derive(Clone, Copy, Debug)]
+    pub struct AwsLcShake256;
 
-            unsafe {
-                check_int_return(EVP_Digest(
-                    input.as_ptr().cast(),
-                    input.len(),
-                    output.as_mut_ptr(),
-                    &mut len as *mut c_uint,
-                    EVP_shake128(),
-                    null_mut(),
-                ))?;
-            }
+    impl VariableLengthHash for AwsLcShake256 {
+        type Error = AwsLcCryptoError;
 
-            Ok(output)
+        fn hash(&self, input: &[u8], out_len: usize) -> Result<Vec<u8>, Self::Error> {
+            xof(unsafe { EVP_shake256() }, input, out_len)
         }
     }
 
@@ -180,7 +200,7 @@ pub mod shake {
     mod tests {
         use mls_rs_crypto_traits::VariableLengthHash;
 
-        use super::AwsLcShake128;
+        use super::{AwsLcShake128, AwsLcShake256};
 
         #[test]
         fn shake() {
@@ -189,6 +209,38 @@ pub mod shake {
             let expected = b"\x85\x99\xbd\x89\xf6\x3a\x84\x8c\x49\xca\x59\x3e\xc3\x7a\x12\xc6";
 
             assert_eq!(&output, expected);
+        }
+
+        // SHAKE256 (FIPS 202 §6.2). The empty-message and "abc" values are the NIST CSRC
+        // "Examples with Intermediate Values" for SHAKE256. The 200-byte input (0x00..=0xc7)
+        // crosses the 136-byte rate, and its 96-byte output (the length used by the
+        // MLKEM768-X25519 key expansion, draft-connolly-cfrg-xwing-kem §5.2) was computed with
+        // Python's `hashlib.shake_256`.
+        #[test]
+        fn shake256_known_answers() {
+            let cases: [(Vec<u8>, &str); 3] = [
+                (
+                    vec![],
+                    "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f",
+                ),
+                (
+                    b"abc".to_vec(),
+                    "483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739\
+                     d5a15bef186a5386c75744c0527e1faa9f8726e462a12a4feb06bd8801e751e4",
+                ),
+                (
+                    (0u8..200).collect(),
+                    "4ee1ca03272b05d3bfb1e1c79a967f823b9fc5e4bb3987b1ba9e9cb5afb07a5e\
+                     e3a07fbd457a94364964a841e7f466e5a022e21ab7f673c18ba98cdb1d5aecfa\
+                     e62268b068f1e4bf9ee9853bcce08dcd491c629aa218b60d3d453e83a554eb17",
+                ),
+            ];
+
+            for (input, expected) in cases {
+                let expected = hex::decode(expected).unwrap();
+                let output = AwsLcShake256.hash(&input, expected.len()).unwrap();
+                assert_eq!(output, expected);
+            }
         }
     }
 }
