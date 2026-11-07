@@ -56,6 +56,9 @@ use mls_rs_crypto_hpke::kem_combiner::xwing::{CombinedKem, XWingSharedSecretHash
 pub use self::kem::ml_kem::{MlKem, MlKemKem};
 
 #[cfg(feature = "post-quantum")]
+pub use self::kem::mlkem768::{mlkem768_kem, MlKem768Kem};
+
+#[cfg(feature = "post-quantum")]
 pub use self::kdf::Sha3;
 
 #[cfg(feature = "post-quantum")]
