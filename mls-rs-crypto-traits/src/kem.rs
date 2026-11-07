@@ -48,6 +48,17 @@ pub trait KemType: Send + Sync + Sized {
     ) -> Result<Vec<u8>, Self::Error>;
 
     fn seed_length_for_derive(&self) -> usize;
+
+    /// Whether HPKE `DeriveKeyPair` first applies the DHKEM step
+    /// `dkp_prk = LabeledExtract("", "dkp_prk", ikm)` (RFC 9180 §7.1.3) before calling
+    /// [generate_deterministic](KemType::generate_deterministic).
+    ///
+    /// Defaults to `true`, the RFC 9180 behaviour. KEMs whose HPKE `DeriveKeyPair` is defined
+    /// directly on `ikm`, such as ML-KEM and MLKEM768-X25519 (draft-ietf-hpke-pq §3, §4),
+    /// return `false` and receive `ikm` unchanged.
+    fn derive_key_pair_uses_dkp_prk(&self) -> bool {
+        true
+    }
 }
 
 /// Struct to represent the output of the kem [encap](KemType::encap) function

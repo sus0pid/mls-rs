@@ -206,6 +206,16 @@ where
 
     #[cfg_attr(not(mls_build_async), maybe_async::must_be_sync)]
     pub async fn derive(&self, ikm: &[u8]) -> Result<(HpkeSecretKey, HpkePublicKey), HpkeError> {
+        // RFC 9180 §7.1.3 (DHKEM) derives from dkp_prk. KEMs that define DeriveKeyPair on
+        // ikm directly (draft-ietf-hpke-pq §3, §4) opt out via the KemType hook.
+        if !self.kem.derive_key_pair_uses_dkp_prk() {
+            return self
+                .kem
+                .generate_deterministic(ikm)
+                .await
+                .map_err(|e| HpkeError::KemError(e.into_any_error()));
+        }
+
         let dkp_prk = self
             .kem_kdf
             .labeled_extract(&[], b"dkp_prk", ikm)
@@ -327,5 +337,121 @@ where
         } else {
             HpkeModeId::Base
         }
+    }
+}
+
+#[cfg(all(test, not(mls_build_async)))]
+mod tests {
+    use alloc::vec::Vec;
+
+    use mls_rs_crypto_traits::{mock::MockKemType, AeadType, KdfType};
+
+    use super::Hpke;
+
+    /// A recognisable stand-in for HKDF: `extract(salt, ikm) = "PRK" || salt || ikm`.
+    #[derive(Clone, Debug)]
+    struct TestKdf;
+
+    impl KdfType for TestKdf {
+        type Error = mls_rs_crypto_traits::mock::TestError;
+
+        fn kdf_id(&self) -> u16 {
+            0x0001
+        }
+
+        fn expand(&self, _prk: &[u8], _info: &[u8], _len: usize) -> Result<Vec<u8>, Self::Error> {
+            unreachable!("Hpke::derive never expands")
+        }
+
+        fn extract(&self, salt: &[u8], ikm: &[u8]) -> Result<Vec<u8>, Self::Error> {
+            Ok([b"PRK" as &[u8], salt, ikm].concat())
+        }
+
+        fn extract_size(&self) -> usize {
+            32
+        }
+    }
+
+    /// `Hpke::derive` doesn't use the AEAD; this type only fills the generic parameter.
+    #[derive(Clone, Debug)]
+    struct NoAead;
+
+    impl AeadType for NoAead {
+        type Error = mls_rs_crypto_traits::mock::TestError;
+
+        fn aead_id(&self) -> u16 {
+            0xffff
+        }
+
+        fn seal(
+            &self,
+            _key: &[u8],
+            _data: &[u8],
+            _aad: Option<&[u8]>,
+            _nonce: &[u8],
+        ) -> Result<Vec<u8>, Self::Error> {
+            unreachable!()
+        }
+
+        fn open(
+            &self,
+            _key: &[u8],
+            _ciphertext: &[u8],
+            _aad: Option<&[u8]>,
+            _nonce: &[u8],
+        ) -> Result<Vec<u8>, Self::Error> {
+            unreachable!()
+        }
+
+        fn key_size(&self) -> usize {
+            0
+        }
+
+        fn nonce_size(&self) -> usize {
+            0
+        }
+    }
+
+    fn kem(uses_dkp_prk: bool, expected_seed: Vec<u8>) -> MockKemType {
+        let mut kem = MockKemType::new();
+        kem.expect_kem_id().return_const(0x0041u16);
+        kem.expect_derive_key_pair_uses_dkp_prk()
+            .return_const(uses_dkp_prk);
+        kem.expect_generate_deterministic()
+            .withf(move |seed| seed == expected_seed.as_slice())
+            .once()
+            .returning(|_| Ok((b"sk".to_vec().into(), b"pk".to_vec().into())));
+        kem
+    }
+
+    // RFC 9180 §7.1.3 (DHKEM): dkp_prk = LabeledExtract("", "dkp_prk", ikm), with
+    // LabeledExtract(salt, label, ikm) = Extract(salt, "HPKE-v1" || suite_id || label || ikm)
+    // and suite_id = "KEM" || I2OSP(kem_id, 2). This is the default and must not change.
+    #[test]
+    fn derive_applies_dkp_prk_by_default() {
+        let expected_seed = [
+            b"PRK" as &[u8],
+            b"HPKE-v1",
+            b"KEM\x00\x41",
+            b"dkp_prk",
+            b"ikm",
+        ]
+        .concat();
+        let hpke = Hpke::<_, _, NoAead>::new(kem(true, expected_seed), TestKdf, None);
+
+        let (sk, pk) = hpke.derive(b"ikm").unwrap();
+        assert_eq!(sk.as_ref(), b"sk");
+        assert_eq!(pk.as_ref(), b"pk");
+    }
+
+    // draft-ietf-hpke-pq §3 and §4 define DeriveKeyPair(ikm) directly on ikm, without the
+    // DHKEM dkp_prk step.
+    #[test]
+    fn derive_passes_ikm_unchanged_when_kem_defines_derive_key_pair() {
+        let hpke = Hpke::<_, _, NoAead>::new(kem(false, b"ikm".to_vec()), TestKdf, None);
+
+        let (sk, pk) = hpke.derive(b"ikm").unwrap();
+        assert_eq!(sk.as_ref(), b"sk");
+        assert_eq!(pk.as_ref(), b"pk");
     }
 }
