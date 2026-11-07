@@ -61,6 +61,9 @@ pub use self::kem::ml_kem::{MlKem, MlKemKem};
 pub use self::kem::mlkem_x25519::{mlkem768_x25519_kem, MlKem768X25519Kem};
 
 #[cfg(feature = "post-quantum")]
+pub use self::kem::mlkem768::{mlkem768_kem, MlKem768Kem};
+
+#[cfg(feature = "post-quantum")]
 pub use self::kdf::Sha3;
 
 #[cfg(feature = "post-quantum")]

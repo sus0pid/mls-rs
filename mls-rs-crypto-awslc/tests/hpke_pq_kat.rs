@@ -264,3 +264,69 @@ mod mlkem768_x25519 {
         assert!(kem.encap(&pk.into()).is_err());
     }
 }
+
+#[cfg(not(mls_build_async))]
+mod mlkem768 {
+    use mls_rs_core::crypto::CipherSuite;
+    use mls_rs_crypto_awslc::{mlkem768_kem, MlKem768Kem};
+    use mls_rs_crypto_traits::KemType;
+
+    use crate::kat::{self, Kem};
+
+    fn kem() -> MlKem768Kem {
+        mlkem768_kem().unwrap()
+    }
+
+    /// draft-ietf-hpke-pq-05 §3 and Appendix A.2.
+    const KEM: Kem<MlKem768Kem> = Kem {
+        kem,
+        kem_id: 0x0041,
+        aead: CipherSuite::CURVE25519_AES128,
+        sk_len: 64,
+        pk_len: 1184,
+        enc_len: 1088,
+        expanded_sk_len: 2400,
+    };
+
+    #[test]
+    fn derive_key_pair() {
+        kat::derive_key_pair(&KEM);
+    }
+
+    #[test]
+    fn receiver_context_matches_vector() {
+        kat::receiver_context_matches_vector(&KEM);
+    }
+
+    #[test]
+    fn round_trip_with_fresh_keys() {
+        kat::round_trip_with_fresh_keys(&KEM);
+    }
+
+    #[test]
+    fn rejects_wrong_lengths() {
+        kat::rejects_wrong_lengths(&KEM);
+    }
+
+    #[test]
+    fn non_canonical_ml_kem_component_fails_encap() {
+        kat::non_canonical_ml_kem_component_fails_encap(&KEM);
+    }
+
+    /// FIPS 203 §6.3: implicit rejection returns a different shared secret, not an error.
+    #[test]
+    fn tampered_ciphertext_changes_the_shared_secret() {
+        let v = KEM.vector();
+        let kem = kem();
+
+        for i in [0, 543, 1087] {
+            let mut enc = v.enc.clone();
+            enc[i] ^= 1;
+
+            let ss = kem
+                .decap(&enc, &v.sk_rm.clone().into(), &v.pk_rm.clone().into())
+                .unwrap();
+            assert_ne!(ss, v.shared_secret, "byte {i}");
+        }
+    }
+}
