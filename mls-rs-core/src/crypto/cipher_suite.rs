@@ -84,6 +84,11 @@ impl CipherSuite {
     #[cfg(feature = "post-quantum")]
     pub const MLKEM768X25519_CHACHA_MLDSA44: CipherSuite = CipherSuite(0x0020);
 
+    /// MLS_192_MLKEM768_AES256GCM_SHA384_MLDSA65
+    /// (draft-ietf-mls-pq-ciphersuites-07 §3.1). Provisional value.
+    #[cfg(feature = "post-quantum")]
+    pub const MLKEM768_AES256_MLDSA65: CipherSuite = CipherSuite(0x0021);
+
     /// Ciphersuite from a raw value.
     pub const fn new(value: u16) -> CipherSuite {
         CipherSuite(value)
@@ -124,10 +129,14 @@ mod tests {
             CipherSuite::MLKEM768X25519_CHACHA_MLDSA44.raw_value(),
             0x0020
         );
+        assert_eq!(CipherSuite::MLKEM768_AES256_MLDSA65.raw_value(), 0x0021);
     }
 
     #[test]
     fn pq_ciphersuites_are_not_in_all() {
-        assert!(!CipherSuite::all().any(|cs| cs == CipherSuite::MLKEM768X25519_CHACHA_MLDSA44));
+        assert!(
+            !CipherSuite::all().any(|cs| cs == CipherSuite::MLKEM768X25519_CHACHA_MLDSA44
+                || cs == CipherSuite::MLKEM768_AES256_MLDSA65)
+        );
     }
 }
