@@ -102,6 +102,9 @@ enum AwsLcHpke {
     /// MLKEM768-X25519 (HPKE KEM 0x647a, draft-ietf-hpke-pq-05 §4).
     #[cfg(feature = "post-quantum")]
     MlKem768X25519(Hpke<MlKem768X25519Kem, AwsLcHkdf, AwsLcAead>),
+    /// ML-KEM-768 (HPKE KEM 0x0041, draft-ietf-hpke-pq-05 §3).
+    #[cfg(feature = "post-quantum")]
+    MlKem768(Hpke<MlKem768Kem, AwsLcHkdf, AwsLcAead>),
 }
 
 impl AwsLcCipherSuite {
@@ -165,6 +168,7 @@ impl AwsLcCryptoProvider {
             CipherSuite::ML_KEM_1024,
             CipherSuite::ML_KEM_768_X25519,
             CipherSuite::MLKEM768X25519_CHACHA_MLDSA44,
+            CipherSuite::MLKEM768_AES256_MLDSA65,
         ]
     }
 }
@@ -409,24 +413,46 @@ impl CryptoProvider for AwsLcCryptoProvider {
     }
 }
 
+/// The HPKE KEMs of the draft-ietf-mls-pq-ciphersuites-07 suites.
+#[cfg(feature = "post-quantum")]
+enum DraftKem {
+    MlKem768X25519,
+    MlKem768,
+}
+
 /// The suites of draft-ietf-mls-pq-ciphersuites-07 §3.1, Table 2.
 #[cfg(feature = "post-quantum")]
 fn draft_pq_cipher_suite(cipher_suite: CipherSuite) -> Option<AwsLcCipherSuite> {
-    let (kdf, aead, sha2_cs, signing) = match cipher_suite {
+    let (kem, kdf, aead, sha2_cs, signing) = match cipher_suite {
         CipherSuite::MLKEM768X25519_CHACHA_MLDSA44 => (
+            DraftKem::MlKem768X25519,
             KdfId::HkdfSha384,
             AeadId::Chacha20Poly1305,
             CipherSuite::P384_AES256,
             Curve::MlDsa44,
         ),
+        CipherSuite::MLKEM768_AES256_MLDSA65 => (
+            DraftKem::MlKem768,
+            KdfId::HkdfSha384,
+            AeadId::Aes256Gcm,
+            CipherSuite::P384_AES256,
+            Curve::MlDsa65,
+        ),
         _ => return None,
     };
 
-    let hpke = AwsLcHpke::MlKem768X25519(Hpke::new(
-        mlkem768_x25519_kem()?,
-        AwsLcHkdf(kdf),
-        Some(AwsLcAead(aead)),
-    ));
+    let hpke = match kem {
+        DraftKem::MlKem768X25519 => AwsLcHpke::MlKem768X25519(Hpke::new(
+            mlkem768_x25519_kem()?,
+            AwsLcHkdf(kdf),
+            Some(AwsLcAead(aead)),
+        )),
+        DraftKem::MlKem768 => AwsLcHpke::MlKem768(Hpke::new(
+            mlkem768_kem()?,
+            AwsLcHkdf(kdf),
+            Some(AwsLcAead(aead)),
+        )),
+    };
 
     Some(AwsLcCipherSuite {
         cipher_suite,
@@ -570,6 +596,8 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             AwsLcHpke::Combined(hpke) => hpke.seal(remote_key, info, None, aad, pt).await,
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => hpke.seal(remote_key, info, None, aad, pt).await,
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => hpke.seal(remote_key, info, None, aad, pt).await,
         }
         .map_err(Into::into)
     }
@@ -591,6 +619,8 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             AwsLcHpke::Combined(hpke) => hpke.seal(remote_key, info, psk_val, aad, pt).await,
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => hpke.seal(remote_key, info, psk_val, aad, pt).await,
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => hpke.seal(remote_key, info, psk_val, aad, pt).await,
         }
         .map_err(Into::into)
     }
@@ -620,6 +650,11 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             }
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => {
+                hpke.open(ciphertext, local_secret, local_public, info, None, aad)
+                    .await
+            }
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => {
                 hpke.open(ciphertext, local_secret, local_public, info, None, aad)
                     .await
             }
@@ -657,6 +692,11 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
                 hpke.open(ciphertext, local_secret, local_public, info, psk_val, aad)
                     .await
             }
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => {
+                hpke.open(ciphertext, local_secret, local_public, info, psk_val, aad)
+                    .await
+            }
         }
         .map_err(Into::into)
     }
@@ -674,6 +714,8 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             AwsLcHpke::Combined(hpke) => hpke.setup_sender(remote_key, info, None).await,
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => hpke.setup_sender(remote_key, info, None).await,
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => hpke.setup_sender(remote_key, info, None).await,
         }
         .map_err(Into::into)
     }
@@ -705,6 +747,11 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
                 hpke.setup_receiver(kem_output, local_secret, local_public, info, None)
                     .await
             }
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => {
+                hpke.setup_receiver(kem_output, local_secret, local_public, info, None)
+                    .await
+            }
         }
         .map_err(Into::into)
     }
@@ -718,6 +765,8 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             AwsLcHpke::Combined(hpke) => hpke.derive(ikm).await,
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => hpke.derive(ikm).await,
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => hpke.derive(ikm).await,
         }
         .map_err(Into::into)
     }
@@ -731,6 +780,8 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             AwsLcHpke::Combined(hpke) => hpke.generate().await,
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => hpke.generate().await,
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => hpke.generate().await,
         }
         .map_err(Into::into)
     }
@@ -744,6 +795,8 @@ impl CipherSuiteProvider for AwsLcCipherSuite {
             AwsLcHpke::Combined(hpke) => hpke.public_key_validate(key),
             #[cfg(feature = "post-quantum")]
             AwsLcHpke::MlKem768X25519(hpke) => hpke.public_key_validate(key),
+            #[cfg(feature = "post-quantum")]
+            AwsLcHpke::MlKem768(hpke) => hpke.public_key_validate(key),
         }
         .map_err(Into::into)
     }

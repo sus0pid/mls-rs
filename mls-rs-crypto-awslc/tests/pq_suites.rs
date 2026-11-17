@@ -32,18 +32,32 @@ struct Expected {
 }
 
 /// draft-ietf-mls-pq-ciphersuites-07 Table 2, draft-ietf-hpke-pq-05 §8.2, FIPS 204 Table 2.
-const DRAFT_SUITES: [Expected; 1] = [Expected {
-    cipher_suite: CipherSuite::MLKEM768X25519_CHACHA_MLDSA44,
-    hpke_kem_id: 0x647a,
-    kdf_extract_size: 48,
-    aead_key_size: 32,
-    hash_len: 48,
-    hpke_pk_len: 1216,
-    hpke_sk_len: 32,
-    hpke_enc_len: 1120,
-    sig_pk_len: 1312,
-    sig_len: 2420,
-}];
+const DRAFT_SUITES: [Expected; 2] = [
+    Expected {
+        cipher_suite: CipherSuite::MLKEM768X25519_CHACHA_MLDSA44,
+        hpke_kem_id: 0x647a,
+        kdf_extract_size: 48,
+        aead_key_size: 32,
+        hash_len: 48,
+        hpke_pk_len: 1216,
+        hpke_sk_len: 32,
+        hpke_enc_len: 1120,
+        sig_pk_len: 1312,
+        sig_len: 2420,
+    },
+    Expected {
+        cipher_suite: CipherSuite::MLKEM768_AES256_MLDSA65,
+        hpke_kem_id: 0x0041,
+        kdf_extract_size: 48,
+        aead_key_size: 32,
+        hash_len: 48,
+        hpke_pk_len: 1184,
+        hpke_sk_len: 64,
+        hpke_enc_len: 1088,
+        sig_pk_len: 1952,
+        sig_len: 3309,
+    },
+];
 
 fn provider(cs: CipherSuite) -> AwsLcCipherSuite {
     AwsLcCryptoProvider::new()
