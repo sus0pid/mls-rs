@@ -1,10 +1,20 @@
-//! Provider-level checks for the draft-ietf-mls-pq-ciphersuites-07 suites (§3.1, Table 2).
+//! Checks for the draft-ietf-mls-pq-ciphersuites-07 suites (§3.1, Table 2), from the
+//! provider up to an MLS group.
 
 #![cfg(all(feature = "post-quantum", not(mls_build_async)))]
 
 #[path = "common/hpke_pq.rs"]
 mod hpke_pq;
 
+use mls_rs::{
+    client_builder::MlsConfig,
+    group::ReceivedMessage,
+    identity::{
+        basic::{BasicCredential, BasicIdentityProvider},
+        SigningIdentity,
+    },
+    Client, Group,
+};
 use mls_rs_core::crypto::{CipherSuite, CipherSuiteProvider, CryptoProvider};
 use mls_rs_crypto_awslc::{AwsLcCipherSuite, AwsLcCryptoProvider};
 
@@ -96,4 +106,74 @@ fn kem_derive_matches_the_hpke_pq_vectors() {
         assert_eq!(sk.as_ref(), v.sk_rm.as_slice(), "{:?}", e.cipher_suite);
         assert_eq!(pk.as_ref(), v.pk_rm.as_slice(), "{:?}", e.cipher_suite);
     }
+}
+
+fn client(cs: CipherSuite, name: &str) -> Client<impl MlsConfig> {
+    let (secret, public) = provider(cs).signature_key_generate().unwrap();
+    let credential = BasicCredential::new(name.as_bytes().to_vec()).into_credential();
+
+    Client::builder()
+        .identity_provider(BasicIdentityProvider)
+        .crypto_provider(AwsLcCryptoProvider::new())
+        .signing_identity(SigningIdentity::new(credential, public), secret, cs)
+        .build()
+}
+
+fn send<C: MlsConfig>(from: &mut Group<C>, to: &mut Group<C>, data: &[u8]) {
+    let msg = from
+        .encrypt_application_message(data, Default::default())
+        .unwrap();
+
+    match to.process_incoming_message(msg).unwrap() {
+        ReceivedMessage::ApplicationMessage(m) => assert_eq!(m.data(), data),
+        other => panic!("unexpected message {other:?}"),
+    }
+}
+
+/// RFC 9420: an Add with a Welcome (§12.4.3.1), a commit with an UpdatePath (§12.4),
+/// application messages (§6.3) and the exporter (§8.5).
+fn group_lifecycle(cs: CipherSuite) {
+    let alice = client(cs, "alice");
+    let bob = client(cs, "bob");
+    let mut alice_group = alice.group_builder().unwrap().build().unwrap();
+
+    let key_package = bob
+        .generate_key_package_message(Default::default(), Default::default(), None)
+        .unwrap();
+    let commit = alice_group
+        .commit_builder()
+        .add_member(key_package)
+        .unwrap()
+        .build()
+        .unwrap();
+    alice_group.apply_pending_commit().unwrap();
+    let (mut bob_group, _) = bob
+        .join_group(None, &commit.welcome_messages[0], None)
+        .unwrap();
+
+    // An empty commit always has an UpdatePath.
+    let commit = bob_group.commit_builder().build().unwrap();
+    bob_group.apply_pending_commit().unwrap();
+    alice_group
+        .process_incoming_message(commit.commit_message)
+        .unwrap();
+
+    send(&mut alice_group, &mut bob_group, b"hello bob");
+    send(&mut bob_group, &mut alice_group, b"hello alice");
+
+    assert_eq!(bob_group.cipher_suite(), cs);
+    assert_eq!(alice_group.current_epoch(), 2);
+    assert_eq!(bob_group.current_epoch(), 2);
+    assert_eq!(
+        alice_group
+            .export_secret(b"pq", b"", 32)
+            .unwrap()
+            .as_bytes(),
+        bob_group.export_secret(b"pq", b"", 32).unwrap().as_bytes()
+    );
+}
+
+#[test]
+fn lifecycle_mlkem768x25519_chacha_mldsa44() {
+    group_lifecycle(CipherSuite::MLKEM768X25519_CHACHA_MLDSA44);
 }
