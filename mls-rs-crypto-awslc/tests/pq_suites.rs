@@ -191,3 +191,8 @@ fn group_lifecycle(cs: CipherSuite) {
 fn lifecycle_mlkem768x25519_chacha_mldsa44() {
     group_lifecycle(CipherSuite::MLKEM768X25519_CHACHA_MLDSA44);
 }
+
+#[test]
+fn lifecycle_mlkem768_aes256_mldsa65() {
+    group_lifecycle(CipherSuite::MLKEM768_AES256_MLDSA65);
+}
