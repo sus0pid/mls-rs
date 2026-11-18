@@ -306,6 +306,16 @@ impl AwsLcCipherSuiteBuilder {
         Self { hpke, ..self }
     }
 
+    /// MLKEM768-X25519 HPKE (draft-ietf-hpke-pq-05 §4) with the given KDF and AEAD.
+    #[cfg(feature = "post-quantum")]
+    pub fn mlkem768_x25519_hpke(self, kdf: KdfId, aead: AeadId) -> Self {
+        let hpke = mlkem768_x25519_kem().map(|kem| {
+            AwsLcHpke::MlKem768X25519(Hpke::new(kem, AwsLcHkdf(kdf), Some(AwsLcAead(aead))))
+        });
+
+        Self { hpke, ..self }
+    }
+
     pub fn build(self, cipher_suite: CipherSuite) -> Option<AwsLcCipherSuite> {
         let fallback_cs = self.fallback_cipher_suite.unwrap_or(cipher_suite);
         let hpke = self.hpke.or_else(|| classical_hpke(fallback_cs))?;
